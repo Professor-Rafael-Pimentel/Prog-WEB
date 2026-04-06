@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Refeitório Pro - Scanner & Dados</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+    <script src="https://unpkg.com/html5-qrcode"></script>
+    <style>
+        :root { --primary: #1b5e20; --accent: #ffd600; --bg: #f0f2f1; }
+        body { font-family: sans-serif; background: var(--bg); margin: 0; padding-bottom: 50px; }
+        header { background: var(--primary); color: white; padding: 15px; text-align: center; }
+        nav { display: flex; overflow-x: auto; background: white; border-bottom: 1px solid #ddd; }
+        nav button { flex: 1; padding: 15px; border: none; background: none; font-weight: bold; cursor: pointer; min-width: 100px; }
+        .container { width: 95%; max-width: 600px; margin: 20px auto; background: white; padding: 20px; border-radius: 12px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
+        .section { display: none; }
+        .active { display: block; }
+        input, .btn { width: 100%; padding: 12px; margin: 8px 0; border-radius: 6px; border: 1px solid #ccc; box-sizing: border-box; }
+        .btn-main { background: var(--primary); color: white; border: none; font-weight: bold; }
+        .btn-export { background: #0277bd; color: white; border: none; margin-top: 20px; }
+        #reader { width: 100%; border-radius: 8px; overflow: hidden; }
+        .user-card { background: #f9f9f9; padding: 12px; border-bottom: 1px solid #eee; display: flex; justify-content: space-between; align-items: center; }
+    </style>
+</head>
+<body>
+
+<header><h1>Gestão de Resíduos e Refeitório</h1></header>
+
+<nav>
+    <button onclick="showSection('scan')">📸 Ler QR</button>
+    <button onclick="showSection('cadastro')">➕ Cadastrar</button>
+    <button onclick="showSection('dados')">📊 Dados</button>
+</nav>
+
+<div class="container">
+    <div id="scan" class="section active">
+        <h2>Validar Entrada</h2>
+        <div id="reader"></div>
+        <div id="scan-result" style="margin-top: 15px; font-weight: bold; color: var(--primary); text-align: center;"></div>
+    </div>
+
+    <div id="cadastro" class="section">
+        <h2>Novo Aluno</h2>
+        <input type="text" id="nome" placeholder="Nome do Aluno">
+        <input type="text" id="id" placeholder="Matrícula/Série">
+        <button class="btn btn-main" onclick="gerarEsalvar()">Gerar QR Code</button>
+        <div id="qrcode" style="display:flex; justify-content:center; margin-top:15px;"></div>
+    </div>
+
+    <div id="dados" class="section">
+        <h2>Relatório e Exportação</h2>
+        <div id="stats-hoje" style="font-size: 1.1rem; margin-bottom: 15px;"></div>
+        <button class="btn btn-export" onclick="exportarCSV()">📥 Exportar Logs para CSV</button>
+        <hr>
+        <h3>Alunos Cadastrados</h3>
+        <div id="lista-alunos"></div>
+    </div>
+</div>
+
+<script>
+    let alunos = JSON.parse(localStorage.getItem('ref_alunos')) || [];
+    let registros = JSON.parse(localStorage.getItem('ref_logs')) || [];
+
+    function showSection(id) {
+        document.querySelectorAll('.section').forEach(s => s.classList.remove('active'));
+        document.getElementById(id).classList.add('active');
+        if(id === 'dados') renderDados();
+        if(id === 'scan') startScanner(); else stopScanner();
+    }
+
+    // --- LÓGICA DO SCANNER ---
+    let html5QrCode;
+    function startScanner() {
+        html5QrCode = new Html5Qrcode("reader");
+        html5QrCode.start({ facingMode: "environment" }, { fps: 10, qrbox: 250 },
+            (decodedText) => {
+                confirmarEntrada(decodedText);
+            }
+        ).catch(err => console.error("Erro na câmera", err));
+    }
+
+    function stopScanner() {
+        if (html5QrCode) html5QrCode.stop().catch(() => {});
+    }
+
+    function confirmarEntrada(hash) {
+        const aluno = alunos.find(a => a.hash === hash);
+        const hoje = new Date().toLocaleDateString();
+        
+        if (!aluno) {
+            document.getElementById('scan-result').innerText = "❌ QR Code inválido!";
+            return;
+        }
+
+        const jaRegistrou = registros.find(r => r.hash === hash && r.data === hoje);
+        if (jaRegistrou) {
+            document.getElementById('scan-result').innerText = `⚠️ ${aluno.nome} já almoçou hoje.`;
+        } else {
+            registros.push({ nome: aluno.nome, id: aluno.id, hash: hash, data: hoje, hora: new Date().toLocaleTimeString() });
+            localStorage.setItem('ref_logs', JSON.stringify(registros));
+            document.getElementById('scan-result').innerText = `✅ Entrada: ${aluno.nome}`;
+            // Feedback tátil no celular
+            if(navigator.vibrate) navigator.vibrate(100);
+        }
+    }
+
+    // --- CADASTRO E QR ---
+    function gerarEsalvar() {
+        const nome = document.getElementById('nome').value;
+        const id = document.getElementById('id').value;
+        if(!nome || !id) return;
+
+        const hash = btoa(nome + id).substring(0, 8); // Gera um código curto
+        alunos.push({ nome, id, hash });
+        localStorage.setItem('ref_alunos', JSON.stringify(alunos));
+
+        document.getElementById('qrcode').innerHTML = "";
+        new QRCode(document.getElementById("qrcode"), { text: hash, width: 150, height: 150 });
+        alert("Cadastrado com sucesso!");
+    }
+
+    // --- EXPORTAÇÃO ---
+    function exportarCSV() {
+        if(registros.length === 0) return alert("Não há dados para exportar.");
+        
+        let csv = "Nome,Identificador,Data,Hora\n";
+        registros.forEach(r => {
+            csv += `${r.nome},${r.id},${r.data},${r.hora}\n`;
+        });
+
+        const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+        const link = document.createElement("a");
+        link.href = URL.createObjectURL(blob);
+        link.setAttribute("download", `refeitorio_dados_${new Date().toLocaleDateString()}.csv`);
+        link.click();
+    }
+
+    function renderDados() {
+        const lista = document.getElementById('lista-alunos');
+        lista.innerHTML = alunos.map(a => `<div class="user-card"><span>${a.nome}</span><small>${a.id}</small></div>`).join('');
+        document.getElementById('stats-hoje').innerText = `Total de registros no banco: ${registros.length}`;
+    }
+
+    showSection('scan');
+</script>
+</body>
+</html>

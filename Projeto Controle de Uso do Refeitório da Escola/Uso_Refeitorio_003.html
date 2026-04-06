@@ -1,0 +1,244 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Refeitório Inteligente - Gestão de Desperdício</title>
+    
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+    <script src="https://unpkg.com/html5-qrcode"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+    <style>
+        :root {
+            --primary: #2e7d32;
+            --accent: #fbc02d;
+            --danger: #d32f2f;
+            --bg: #f5f5f5;
+        }
+
+        body { font-family: 'Segoe UI', sans-serif; background: var(--bg); margin: 0; padding-bottom: 60px; color: #333; }
+        
+        header { 
+            background: var(--primary); color: white; padding: 20px; 
+            text-align: center; box-shadow: 0 2px 10px rgba(0,0,0,0.2);
+        }
+
+        nav { 
+            display: flex; background: white; position: sticky; top: 0; z-index: 100;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+        }
+
+        nav button { 
+            flex: 1; padding: 15px; border: none; background: none; 
+            font-weight: bold; color: var(--primary); cursor: pointer; transition: 0.3s;
+        }
+
+        nav button:hover { background: #e8f5e9; }
+
+        .container { width: 92%; max-width: 600px; margin: 20px auto; }
+
+        .card { 
+            background: white; padding: 20px; border-radius: 15px; 
+            box-shadow: 0 4px 15px rgba(0,0,0,0.05); margin-bottom: 20px;
+        }
+
+        .section { display: none; }
+        .active { display: block; animation: fadeIn 0.4s; }
+
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+
+        input, .btn { width: 100%; padding: 12px; margin: 8px 0; border-radius: 8px; border: 1px solid #ddd; box-sizing: border-box; font-size: 16px; }
+        
+        .btn-main { background: var(--primary); color: white; border: none; font-weight: bold; cursor: pointer; }
+        .btn-export { background: #0277bd; color: white; border: none; }
+
+        #reader { width: 100%; border-radius: 12px; overflow: hidden; background: #000; }
+        
+        #qrcode-display { display: flex; flex-direction: column; align-items: center; margin-top: 15px; border: 2px dashed var(--primary); padding: 15px; }
+
+        .chart-container { position: relative; height: 300px; width: 100%; }
+
+        .user-item { 
+            display: flex; justify-content: space-between; padding: 10px; 
+            border-bottom: 1px solid #eee; font-size: 14px;
+        }
+    </style>
+</head>
+<body>
+
+<header>
+    <h1>Refeitório Inteligente</h1>
+    <small>Escola de Ensino Médio - Controle de Desperdício</small>
+</header>
+
+<nav>
+    <button onclick="showSection('scan')">📸 SCANNER</button>
+    <button onclick="showSection('cadastro')">➕ CADASTRO</button>
+    <button onclick="showSection('dados')">📊 DADOS</button>
+</nav>
+
+<div class="container">
+    
+    <div id="scan" class="section active">
+        <div class="card">
+            <h2>Validar Refeição</h2>
+            <div id="reader"></div>
+            <div id="scan-msg" style="text-align: center; margin-top: 15px; font-weight: bold; min-height: 24px;"></div>
+        </div>
+    </div>
+
+    <div id="cadastro" class="section">
+        <div class="card">
+            <h2>Novo Registro</h2>
+            <input type="text" id="reg-nome" placeholder="Nome Completo">
+            <input type="text" id="reg-id" placeholder="Matrícula ou Turma">
+            <button class="btn btn-main" onclick="salvarNovoAluno()">Gerar QR Code e Salvar</button>
+            
+            <div id="qrcode-display" style="display: none;">
+                <div id="canvas-qr"></div>
+                <p id="qr-info" style="font-weight: bold;"></p>
+                <button class="btn" onclick="fecharQR()">Concluir</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="dados" class="section">
+        <div class="card">
+            <h2>Análise de Frequência</h2>
+            <div class="chart-container">
+                <canvas id="graficoDesperdicio"></canvas>
+            </div>
+            <p style="font-size: 12px; color: #666;">* Linha vermelha indica a meta de produção (ex: 300 refeições).</p>
+        </div>
+
+        <div class="card">
+            <h3>Gestão de Dados</h3>
+            <button class="btn btn-export" onclick="exportarCSV()">📥 Exportar Logs (CSV)</button>
+            <button class="btn" style="color: var(--danger);" onclick="limparTudo()">⚠️ Limpar Tudo</button>
+            <div id="lista-alunos" style="margin-top: 15px;"></div>
+        </div>
+    </div>
+
+</div>
+
+<script>
+    // --- DATABASE EM MEMÓRIA ---
+    let db_alunos = JSON.parse(localStorage.getItem('escola_alunos')) || [];
+    let db_logs = JSON.parse(localStorage.getItem('escola_logs')) || [];
+    let scanner;
+    let chartInstance;
+
+    function showSection(id) {
+        document.querySelectorAll('.section').forEach(s => s.classList.remove('active'));
+        document.getElementById(id).classList.add('active');
+        
+        if (id === 'scan') ligarCamera(); else desligarCamera();
+        if (id === 'dados') renderizarRelatorios();
+    }
+
+    // --- FUNÇÕES DE PERSISTÊNCIA ---
+    function salvarNovoAluno() {
+        const nome = document.getElementById('reg-nome').value;
+        const id = document.getElementById('reg-id').value;
+        if (!nome || !id) return alert("Preencha todos os campos!");
+
+        const hash = btoa(nome + id).substring(0, 10);
+        const aluno = { nome, id, hash };
+        
+        db_alunos.push(aluno);
+        localStorage.setItem('escola_alunos', JSON.stringify(db_alunos));
+
+        // Mostrar QR
+        document.getElementById('qrcode-display').style.display = 'flex';
+        document.getElementById('canvas-qr').innerHTML = "";
+        new QRCode(document.getElementById("canvas-qr"), { text: hash, width: 160, height: 160 });
+        document.getElementById('qr-info').innerText = nome;
+        
+        document.getElementById('reg-nome').value = "";
+        document.getElementById('reg-id').value = "";
+    }
+
+    function fecharQR() { document.getElementById('qrcode-display').style.display = 'none'; }
+
+    // --- LÓGICA DO SCANNER ---
+    function ligarCamera() {
+        scanner = new Html5Qrcode("reader");
+        scanner.start({ facingMode: "environment" }, { fps: 10, qrbox: 250 }, 
+            (decodedText) => { processarEntrada(decodedText); }
+        ).catch(() => {});
+    }
+
+    function desligarCamera() { if(scanner) scanner.stop().catch(() => {}); }
+
+    function processarEntrada(hash) {
+        const aluno = db_alunos.find(a => a.hash === hash);
+        const hoje = new Date().toLocaleDateString();
+        const msg = document.getElementById('scan-msg');
+
+        if (!aluno) {
+            msg.innerText = "❌ ALUNO NÃO ENCONTRADO!";
+            msg.style.color = "red";
+            return;
+        }
+
+        const jaComeu = db_logs.find(l => l.hash === hash && l.data === hoje);
+        if (jaComeu) {
+            msg.innerText = `⚠️ ${aluno.nome} JÁ REALIZOU CHECK-IN HOJE.`;
+            msg.style.color = "orange";
+        } else {
+            db_logs.push({ nome: aluno.nome, id: aluno.id, hash, data: hoje, hora: new Date().toLocaleTimeString() });
+            localStorage.setItem('escola_logs', JSON.stringify(db_logs));
+            msg.innerText = `✅ BEM-VINDO, ${aluno.nome.toUpperCase()}!`;
+            msg.style.color = "green";
+            if(navigator.vibrate) navigator.vibrate(200);
+        }
+    }
+
+    // --- RELATÓRIOS E GRÁFICOS ---
+    function renderizarRelatorios() {
+        const ctx = document.getElementById('graficoDesperdicio').getContext('2d');
+        const contagem = {};
+        db_logs.forEach(l => contagem[l.data] = (contagem[l.data] || 0) + 1);
+
+        const labels = Object.keys(contagem).slice(-7);
+        const valores = labels.map(l => contagem[l]);
+        const metaProducao = new Array(labels.length).fill(300); // Exemplo: Meta de 300 refeições
+
+        if (chartInstance) chartInstance.destroy();
+        chartInstance = new Chart(ctx, {
+            type: 'bar',
+            data: {
+                labels: labels,
+                datasets: [
+                    { label: 'Presença Real', data: valores, backgroundColor: '#2e7d32' },
+                    { label: 'Meta de Produção', data: metaProducao, type: 'line', borderColor: 'red', borderWidth: 2, fill: false }
+                ]
+            },
+            options: { responsive: true, maintainAspectRatio: false }
+        });
+
+        // Listar alunos cadastrados
+        document.getElementById('lista-alunos').innerHTML = `<h4>Cadastrados: ${db_alunos.length}</h4>` + 
+            db_alunos.map(a => `<div class="user-item"><span>${a.nome}</span><span>${a.id}</span></div>`).join('');
+    }
+
+    function exportarCSV() {
+        let csv = "Nome,ID,Data,Hora\n" + db_logs.map(l => `${l.nome},${l.id},${l.data},${l.hora}`).join("\n");
+        const blob = new Blob([csv], { type: 'text/csv' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = 'relatorio_refeitorio.csv';
+        a.click();
+    }
+
+    function limparTudo() {
+        if(confirm("Isso apagará todos os alunos e registros. Tem certeza?")) {
+            localStorage.clear();
+            location.reload();
+        }
+    }
+</script>
+</body>
+</html>

@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Refeitório Pro - App Escolar</title>
+    
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+    <script src="https://unpkg.com/html5-qrcode"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+    <style>
+        :root { --primary: #2e7d32; --accent: #fbc02d; --bg: #f5f5f5; }
+        
+        body { font-family: 'Segoe UI', sans-serif; background: var(--bg); margin: 0; padding-bottom: 60px; }
+        
+        header { background: var(--primary); color: white; padding: 15px; text-align: center; }
+        
+        nav { display: flex; background: white; position: sticky; top: 0; z-index: 100; box-shadow: 0 2px 5px rgba(0,0,0,0.1); }
+        
+        nav button { flex: 1; padding: 15px; border: none; background: none; font-weight: bold; color: var(--primary); cursor: pointer; }
+        
+        .container { width: 92%; max-width: 600px; margin: 20px auto; }
+        
+        .card { background: white; padding: 20px; border-radius: 15px; box-shadow: 0 4px 15px rgba(0,0,0,0.05); margin-bottom: 20px; }
+        
+        .section { display: none; }
+        
+        .active { display: block; }
+        
+        input, .btn { width: 100%; padding: 12px; margin: 8px 0; border-radius: 8px; border: 1px solid #ddd; box-sizing: border-box; font-size: 16px; }
+        
+        .btn-main { background: var(--primary); color: white; border: none; font-weight: bold; }
+        
+        .btn-import { background: #546e7a; color: white; border: none; }
+        
+        #reader { width: 100%; border-radius: 12px; overflow: hidden; }
+        
+        .chart-container { position: relative; height: 250px; width: 100%; }
+        
+        #qrcode-display { display: none; flex-direction: column; align-items: center; border: 2px dashed var(--primary); padding: 15px; margin-top: 10px; }
+    </style>
+</head>
+<body>
+
+<header>
+    <h1>Refeitório Inteligente</h1>
+</header>
+
+<nav>
+    <button onclick="showSection('scan')">📸 SCAN</button>
+    <button onclick="showSection('cadastro')">➕ ALUNOS</button>
+    <button onclick="showSection('dados')">📊 DADOS</button>
+</nav>
+
+<div class="container">
+    
+    <div id="scan" class="section active">
+        <div class="card">
+            <h2>Validar Acesso</h2>
+            <div id="reader"></div>
+            <div id="scan-msg" style="text-align: center; margin-top: 15px; font-weight: bold;"></div>
+        </div>
+    </div>
+
+    <div id="cadastro" class="section">
+        <div class="card">
+            <h2>Importar Lista (.csv)</h2>
+            <p style="font-size: 12px; color: #666;">Formato do arquivo: Nome, Matrícula (um por linha)</p>
+            <input type="file" id="csvFile" accept=".csv" class="btn">
+            <button class="btn btn-import" onclick="importarCSV()">Carregar Arquivo</button>
+        </div>
+
+        <div class="card">
+            <h2>Cadastro Individual</h2>
+            <input type="text" id="reg-nome" placeholder="Nome Completo">
+            <input type="text" id="reg-id" placeholder="Matrícula/Série">
+            <button class="btn btn-main" onclick="salvarNovoAluno()">Gerar QR Code e Salvar</button>
+            <div id="qrcode-display">
+                <div id="canvas-qr"></div>
+                <button class="btn" onclick="fecharQR()">Fechar</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="dados" class="section">
+        <div class="card">
+            <div class="chart-container"><canvas id="graficoDesperdicio"></canvas></div>
+        </div>
+        <div class="card">
+            <button class="btn btn-import" onclick="baixarRelatorio()">📥 Exportar Logs (CSV)</button>
+            <div id="lista-alunos" style="margin-top: 15px; max-height: 200px; overflow-y: auto;"></div>
+        </div>
+    </div>
+</div>
+
+<script>
+    let db_alunos = JSON.parse(localStorage.getItem('escola_alunos')) || [];
+    let db_logs = JSON.parse(localStorage.getItem('escola_logs')) || [];
+    let scanner;
+    let chartInstance;
+
+    function showSection(id) {
+        document.querySelectorAll('.section').forEach(s => s.classList.remove('active'));
+        document.getElementById(id).classList.add('active');
+        if (id === 'scan') ligarCamera(); else desligarCamera();
+        if (id === 'dados') renderizarRelatorios();
+    }
+
+    // --- IMPORTAÇÃO EM MASSA ---
+    function importarCSV() {
+        const fileInput = document.getElementById('csvFile');
+        const file = fileInput.files[0];
+        if (!file) return alert("Selecione um arquivo CSV!");
+
+        const reader = new FileReader();
+        reader.onload = function(e) {
+            const text = e.target.result;
+            const linhas = text.split('\n');
+            let novos = 0;
+
+            linhas.forEach(linha => {
+                const colunas = linha.split(',');
+                if (colunas.length >= 2) {
+                    const nome = colunas[0].trim();
+                    const id = colunas[1].trim();
+                    const hash = btoa(nome + id).substring(0, 10);
+                    
+                    // Evita duplicados
+                    if (!db_alunos.find(a => a.hash === hash)) {
+                        db_alunos.push({ nome, id, hash });
+                        novos++;
+                    }
+                }
+            });
+
+            localStorage.setItem('escola_alunos', JSON.stringify(db_alunos));
+            alert(`${novos} novos alunos importados com sucesso!`);
+            fileInput.value = "";
+        };
+        reader.readAsText(file);
+    }
+
+    // --- RESTANTE DAS FUNÇÕES (Cadastro, Scan e Gráfico) ---
+    function salvarNovoAluno() {
+        const nome = document.getElementById('reg-nome').value;
+        const id = document.getElementById('reg-id').value;
+        if (!nome || !id) return;
+        const hash = btoa(nome + id).substring(0, 10);
+        db_alunos.push({ nome, id, hash });
+        localStorage.setItem('escola_alunos', JSON.stringify(db_alunos));
+        document.getElementById('qrcode-display').style.display = 'flex';
+        document.getElementById('canvas-qr').innerHTML = "";
+        new QRCode(document.getElementById("canvas-qr"), { text: hash, width: 150, height: 150 });
+    }
+
+    function fecharQR() { document.getElementById('qrcode-display').style.display = 'none'; }
+
+    function ligarCamera() {
+        scanner = new Html5Qrcode("reader");
+        scanner.start({ facingMode: "environment" }, { fps: 10, qrbox: 250 }, 
+            (decodedText) => { processarEntrada(decodedText); }
+        ).catch(() => {});
+    }
+
+    function desligarCamera() { if(scanner) scanner.stop().catch(() => {}); }
+
+    function processarEntrada(hash) {
+        const aluno = db_alunos.find(a => a.hash === hash);
+        const hoje = new Date().toLocaleDateString();
+        const msg = document.getElementById('scan-msg');
+
+        if (!aluno) {
+            msg.innerText = "❌ INVÁLIDO"; msg.style.color = "red"; return;
+        }
+
+        const jaComeu = db_logs.find(l => l.hash === hash && l.data === hoje);
+        if (jaComeu) {
+            msg.innerText = `⚠️ ${aluno.nome} JÁ ENTROU HOJE`; msg.style.color = "orange";
+        } else {
+            db_logs.push({ nome: aluno.nome, id: aluno.id, hash, data: hoje, hora: new Date().toLocaleTimeString() });
+            localStorage.setItem('escola_logs', JSON.stringify(db_logs));
+            msg.innerText = `✅ OK: ${aluno.nome}`; msg.style.color = "green";
+            if(navigator.vibrate) navigator.vibrate(100);
+        }
+    }
+
+    function renderizarRelatorios() {
+        const ctx = document.getElementById('graficoDesperdicio').getContext('2d');
+        const contagem = {};
+        db_logs.forEach(l => contagem[l.data] = (contagem[l.data] || 0) + 1);
+        const labels = Object.keys(contagem).slice(-7);
+        const valores = labels.map(l => contagem[l]);
+
+        if (chartInstance) chartInstance.destroy();
+        chartInstance = new Chart(ctx, {
+            type: 'bar',
+            data: {
+                labels: labels,
+                datasets: [{ label: 'Alunos/Dia', data: valores, backgroundColor: '#2e7d32' }]
+            },
+            options: { responsive: true, maintainAspectRatio: false }
+        });
+        document.getElementById('lista-alunos').innerHTML = db_alunos.map(a => `<div style="font-size:12px; border-bottom:1px solid #eee; padding:5px;">${a.nome} (${a.id})</div>`).join('');
+    }
+
+    function baixarRelatorio() {
+        let csv = "Nome,ID,Data,Hora\n" + db_logs.map(l => `${l.nome},${l.id},${l.data},${l.hora}`).join("\n");
+        const blob = new Blob([csv], { type: 'text/csv' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a'); a.href = url; a.download = 'frequencia.csv'; a.click();
+    }
+</script>
+</body>
+</html>

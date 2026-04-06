@@ -1,0 +1,249 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Refeitório Inteligente</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+    <style>
+        :root {
+            --primary: #2e7d32;
+            --secondary: #fbc02d;
+            --bg: #f4f7f6;
+            --text: #333;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: var(--bg);
+            color: var(--text);
+            margin: 0;
+            padding: 0;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+
+        header {
+            background-color: var(--primary);
+            color: white;
+            width: 100%;
+            padding: 1rem;
+            text-align: center;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.2);
+        }
+
+        nav {
+            display: flex;
+            justify-content: space-around;
+            width: 100%;
+            background: #fff;
+            padding: 10px 0;
+            position: sticky;
+            top: 0;
+            z-index: 100;
+        }
+
+        nav button {
+            background: none;
+            border: none;
+            font-weight: bold;
+            color: var(--primary);
+            cursor: pointer;
+            padding: 10px;
+        }
+
+        .container {
+            width: 90%;
+            max-width: 500px;
+            margin: 20px auto;
+            background: white;
+            padding: 20px;
+            border-radius: 15px;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.1);
+        }
+
+        .section { display: none; }
+        .active { display: block; }
+
+        input, button.main-btn {
+            width: 100%;
+            padding: 12px;
+            margin: 10px 0;
+            border-radius: 8px;
+            border: 1px solid #ddd;
+            box-sizing: border-box;
+        }
+
+        button.main-btn {
+            background-color: var(--primary);
+            color: white;
+            border: none;
+            font-weight: bold;
+            transition: 0.3s;
+        }
+
+        button.main-btn:active { transform: scale(0.98); }
+
+        .user-card {
+            background: #eee;
+            padding: 10px;
+            margin: 5px 0;
+            border-radius: 8px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        #qrcode-container {
+            text-align: center;
+            margin-top: 20px;
+            padding: 20px;
+            background: #fff;
+            border: 2px dashed var(--primary);
+        }
+
+        .stats {
+            font-size: 1.2rem;
+            text-align: center;
+            margin: 20px 0;
+            color: var(--primary);
+        }
+
+        .history-item { border-left: 5px solid var(--secondary); padding-left: 10px; margin: 10px 0; }
+    </style>
+</head>
+<body>
+
+<header>
+    <h1>Refeitório Escolar</h1>
+</header>
+
+<nav>
+    <button onclick="showSection('cadastro')">Cadastrar</button>
+    <button onclick="showSection('lista')">Alunos</button>
+    <button onclick="showSection('controle')">Controle Hoje</button>
+</nav>
+
+<div class="container">
+    <div id="cadastro" class="section active">
+        <h2>Novo Cadastro</h2>
+        <p>Registre o aluno para gerar o QR Code de acesso.</p>
+        <input type="text" id="nomeAluno" placeholder="Nome completo do aluno">
+        <input type="text" id="idAluno" placeholder="Matrícula ou Turma">
+        <button class="main-btn" onclick="salvarAluno()">Gerar QR Code e Salvar</button>
+        
+        <div id="qrcode-container" style="display:none;">
+            <div id="qrcode"></div>
+            <p id="qr-nome" style="font-weight:bold; margin-top:10px;"></p>
+            <button onclick="limparQR()">Novo Cadastro</button>
+        </div>
+    </div>
+
+    <div id="lista" class="section">
+        <h2>Banco de Dados</h2>
+        <div id="listaAlunos"></div>
+    </div>
+
+    <div id="controle" class="section">
+        <h2>Controle de Hoje</h2>
+        <div class="stats">
+            Refeições confirmadas: <strong id="countHoje">0</strong>
+        </div>
+        <p>Simule a leitura do QR Code selecionando o aluno abaixo (ou use um leitor externo no futuro):</p>
+        <div id="listaCheckin"></div>
+    </div>
+</div>
+
+<script>
+    let db = JSON.parse(localStorage.getItem('refeitorioDB')) || [];
+    let logs = JSON.parse(localStorage.getItem('refeitorioLogs')) || [];
+
+    function showSection(id) {
+        document.querySelectorAll('.section').forEach(s => s.classList.remove('active'));
+        document.getElementById(id).classList.add('active');
+        if(id === 'lista') renderLista();
+        if(id === 'controle') renderControle();
+    }
+
+    function salvarAluno() {
+        const nome = document.getElementById('nomeAluno').value;
+        const id = document.getElementById('idAluno').value;
+        
+        if(!nome || !id) return alert("Preencha todos os campos!");
+
+        const novoAluno = { nome, id, hash: btoa(nome + id) };
+        db.push(novoAluno);
+        localStorage.setItem('refeitorioDB', JSON.stringify(db));
+
+        // Gerar QR Code
+        document.getElementById('qrcode-container').style.display = 'block';
+        document.getElementById('qrcode').innerHTML = "";
+        new QRCode(document.getElementById("qrcode"), {
+            text: novoAluno.hash,
+            width: 128,
+            height: 128
+        });
+        document.getElementById('qr-nome').innerText = nome;
+        document.getElementById('nomeAluno').value = "";
+        document.getElementById('idAluno').value = "";
+    }
+
+    function limparQR() {
+        document.getElementById('qrcode-container').style.display = 'none';
+    }
+
+    function renderLista() {
+        const div = document.getElementById('listaAlunos');
+        div.innerHTML = db.length ? "" : "Nenhum aluno cadastrado.";
+        db.forEach((aluno, index) => {
+            div.innerHTML += `
+                <div class="user-card">
+                    <span>${aluno.nome} (${aluno.id})</span>
+                    <button onclick="removerAluno(${index})">❌</button>
+                </div>
+            `;
+        });
+    }
+
+    function renderControle() {
+        const hoje = new Date().toLocaleDateString();
+        const atendidosHoje = logs.filter(l => l.data === hoje);
+        document.getElementById('countHoje').innerText = atendidosHoje.length;
+
+        const div = document.getElementById('listaCheckin');
+        div.innerHTML = "";
+        db.forEach(aluno => {
+            const jaComeu = atendidosHoje.find(l => l.hash === aluno.hash);
+            div.innerHTML += `
+                <div class="user-card" style="opacity: ${jaComeu ? '0.5' : '1'}">
+                    <span>${aluno.nome}</span>
+                    <button ${jaComeu ? 'disabled' : ''} onclick="registrarEntrada('${aluno.hash}')">
+                        ${jaComeu ? 'Confirmado' : 'Check-in'}
+                    </button>
+                </div>
+            `;
+        });
+    }
+
+    function registrarEntrada(hash) {
+        const hoje = new Date().toLocaleDateString();
+        logs.push({ hash, data: hoje, hora: new Date().toLocaleTimeString() });
+        localStorage.setItem('refeitorioLogs', JSON.stringify(logs));
+        renderControle();
+    }
+
+    function removerAluno(index) {
+        if(confirm("Deseja excluir este registro?")) {
+            db.splice(index, 1);
+            localStorage.setItem('refeitorioDB', JSON.stringify(db));
+            renderLista();
+        }
+    }
+
+    // Inicialização
+    renderControle();
+</script>
+
+</body>
+</html>

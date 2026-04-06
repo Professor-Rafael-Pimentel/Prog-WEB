@@ -1,0 +1,224 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Refeitório Inteligente v4.0</title>
+    
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+    <script src="https://unpkg.com/html5-qrcode"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+    <style>
+        :root { --primary: #1b5e20; --accent: #c6ff00; --bg: #f0f4f0; }
+        body { font-family: 'Segoe UI', sans-serif; background: var(--bg); margin: 0; padding-bottom: 70px; }
+        header { background: var(--primary); color: white; padding: 15px; text-align: center; border-bottom: 4px solid var(--accent); }
+        nav { display: flex; background: white; position: sticky; top: 0; z-index: 100; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
+        nav button { flex: 1; padding: 15px; border: none; background: none; font-weight: bold; color: var(--primary); cursor: pointer; }
+        .container { width: 94%; max-width: 600px; margin: 20px auto; }
+        .card { background: white; padding: 20px; border-radius: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.08); margin-bottom: 20px; }
+        .section { display: none; }
+        .active { display: block; }
+        input, .btn { width: 100%; padding: 12px; margin: 8px 0; border-radius: 8px; border: 1px solid #ddd; box-sizing: border-box; font-size: 16px; }
+        .btn-main { background: var(--primary); color: white; border: none; font-weight: bold; cursor: pointer; }
+        .btn-predict { background: #558b2f; color: white; border: none; }
+        #reader { width: 100%; border-radius: 12px; overflow: hidden; background: #000; }
+        .prediction-box { background: #e8f5e9; padding: 15px; border-radius: 8px; border-left: 5px solid var(--primary); margin-top: 10px; }
+        .alert-waste { color: #d32f2f; font-weight: bold; }
+    </style>
+</head>
+<body>
+
+<header>
+    <h1>Gestão Zero Desperdício</h1>
+</header>
+
+<nav>
+    <button onclick="showSection('scan')">📸 SCAN</button>
+    <button onclick="showSection('cadastro')">➕ ALUNOS</button>
+    <button onclick="showSection('previsao')">📈 PREVISÃO</button>
+</nav>
+
+<div class="container">
+    
+    <div id="scan" class="section active">
+        <div class="card">
+            <h2>Validar Refeição</h2>
+            <div id="reader"></div>
+            <div id="scan-msg" style="text-align: center; margin-top: 15px; font-weight: bold; min-height: 24px;"></div>
+        </div>
+    </div>
+
+    <div id="cadastro" class="section">
+        <div class="card">
+            <h2>Importar Base de Dados</h2>
+            <input type="file" id="csvFile" accept=".csv" class="btn">
+            <button class="btn btn-predict" onclick="importarCSV()">Carregar Alunos (.csv)</button>
+        </div>
+        <div class="card">
+            <h2>Cadastro Manual</h2>
+            <input type="text" id="reg-nome" placeholder="Nome Completo">
+            <input type="text" id="reg-id" placeholder="Matrícula">
+            <button class="btn btn-main" onclick="salvarNovoAluno()">Gerar QR Code</button>
+            <div id="qrcode-display" style="display:none; text-align:center; margin-top:15px;">
+                <div id="canvas-qr" style="display: inline-block;"></div>
+                <button class="btn" onclick="document.getElementById('qrcode-display').style.display='none'">Fechar</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="previsao" class="section">
+        <div class="card">
+            <h2>Cálculo de Produção Ideal</h2>
+            <p>Com base nos últimos 7 dias de consumo:</p>
+            <div id="previsao-resultado" class="prediction-box">
+                Carregando dados...
+            </div>
+        </div>
+
+        <div class="card">
+            <h3>Simulador de Desperdício</h3>
+            <label>Refeições preparadas hoje:</label>
+            <input type="number" id="input-produzido" placeholder="Ex: 350" oninput="simularDesperdicio()">
+            <div id="resultado-simulacao" class="alert-waste"></div>
+        </div>
+
+        <div class="card">
+            <canvas id="graficoFrequencia" style="height:200px;"></canvas>
+            <button class="btn" style="background:#0277bd; color:white; margin-top:15px;" onclick="baixarRelatorio()">📥 Baixar Histórico (.csv)</button>
+        </div>
+    </div>
+</div>
+
+<script>
+    let db_alunos = JSON.parse(localStorage.getItem('escola_alunos')) || [];
+    let db_logs = JSON.parse(localStorage.getItem('escola_logs')) || [];
+    let scanner, chartInstance;
+
+    function showSection(id) {
+        document.querySelectorAll('.section').forEach(s => s.classList.remove('active'));
+        document.getElementById(id).classList.add('active');
+        if (id === 'scan') ligarCamera(); else desligarCamera();
+        if (id === 'previsao') calcularPrevisao();
+    }
+
+    // --- IMPORTAÇÃO E CADASTRO ---
+    function importarCSV() {
+        const file = document.getElementById('csvFile').files[0];
+        if (!file) return alert("Selecione o arquivo!");
+        const reader = new FileReader();
+        reader.onload = function(e) {
+            const linhas = e.target.result.split('\n');
+            linhas.forEach(l => {
+                const col = l.split(',');
+                if (col.length >= 2) {
+                    const hash = btoa(col[0].trim() + col[1].trim()).substring(0, 10);
+                    if (!db_alunos.find(a => a.hash === hash)) db_alunos.push({ nome: col[0].trim(), id: col[1].trim(), hash });
+                }
+            });
+            localStorage.setItem('escola_alunos', JSON.stringify(db_alunos));
+            alert("Importação concluída!");
+        };
+        reader.readAsText(file);
+    }
+
+    function salvarNovoAluno() {
+        const nome = document.getElementById('reg-nome').value;
+        const id = document.getElementById('reg-id').value;
+        if (!nome || !id) return;
+        const hash = btoa(nome + id).substring(0, 10);
+        db_alunos.push({ nome, id, hash });
+        localStorage.setItem('escola_alunos', JSON.stringify(db_alunos));
+        document.getElementById('qrcode-display').style.display = 'block';
+        document.getElementById('canvas-qr').innerHTML = "";
+        new QRCode(document.getElementById("canvas-qr"), { text: hash, width: 150, height: 150 });
+    }
+
+    // --- SCANNER ---
+    function ligarCamera() {
+        scanner = new Html5Qrcode("reader");
+        scanner.start({ facingMode: "environment" }, { fps: 10, qrbox: 250 }, 
+            (decodedText) => {
+                const aluno = db_alunos.find(a => a.hash === decodedText);
+                const hoje = new Date().toLocaleDateString();
+                const msg = document.getElementById('scan-msg');
+                if (!aluno) { msg.innerText = "❌ NÃO CADASTRADO"; return; }
+                if (db_logs.find(l => l.hash === decodedText && l.data === hoje)) {
+                    msg.innerText = `⚠️ ${aluno.nome} JÁ COMEU`;
+                } else {
+                    db_logs.push({ nome: aluno.nome, data: hoje, hash: decodedText });
+                    localStorage.setItem('escola_logs', JSON.stringify(db_logs));
+                    msg.innerText = `✅ OK: ${aluno.nome}`;
+                    if(navigator.vibrate) navigator.vibrate(100);
+                }
+            }
+        ).catch(() => {});
+    }
+
+    function desligarCamera() { if(scanner) scanner.stop().catch(() => {}); }
+
+    // --- LÓGICA DE PREVISÃO (FISICA/ECONOMIA APLICADA) ---
+    function calcularPrevisao() {
+        const contagemPorDia = {};
+        db_logs.forEach(l => contagemPorDia[l.data] = (contagemPorDia[l.data] || 0) + 1);
+        
+        const valores = Object.values(contagemPorDia).slice(-7); // Últimos 7 dias
+        if (valores.length === 0) {
+            document.getElementById('previsao-resultado').innerText = "Dados insuficientes para prever.";
+            return;
+        }
+
+        // Média Móvel
+        const media = valores.reduce((a, b) => a + b, 0) / valores.length;
+        
+        // Desvio Padrão (Margem de Segurança)
+        const variancia = valores.reduce((a, b) => a + Math.pow(b - media, 2), 0) / valores.length;
+        const desvio = Math.sqrt(variancia);
+
+        // Recomendação: Média + 1 Desvio Padrão (Cobre ~84% das variações normais)
+        const recomendacao = Math.ceil(media + desvio);
+
+        document.getElementById('previsao-resultado').innerHTML = `
+            <strong>Média Histórica:</strong> ${media.toFixed(1)} refeições/dia<br>
+            <strong>Variabilidade (σ):</strong> ±${desvio.toFixed(1)}<br><hr>
+            <strong>SUGESTÃO DE PREPARO: ${recomendacao} refeições</strong>
+        `;
+
+        renderGrafico(contagemPorDia);
+    }
+
+    function simularDesperdicio() {
+        const produzido = document.getElementById('input-produzido').value;
+        const contagemPorDia = {};
+        db_logs.forEach(l => contagemPorDia[l.data] = (contagemPorDia[l.data] || 0) + 1);
+        const medias = Object.values(contagemPorDia);
+        const mediaPresenca = medias.length ? medias.reduce((a,b)=>a+b)/medias.length : 0;
+
+        if (produzido > mediaPresenca) {
+            const sobra = produzido - mediaPresenca;
+            document.getElementById('resultado-simulacao').innerText = `⚠️ Perda Estimada: ~${sobra.toFixed(0)} refeições excedentes.`;
+        } else {
+            document.getElementById('resultado-simulacao').innerText = `✅ Produção dentro da meta de segurança.`;
+        }
+    }
+
+    function renderGrafico(dados) {
+        const ctx = document.getElementById('graficoFrequencia').getContext('2d');
+        if (chartInstance) chartInstance.destroy();
+        chartInstance = new Chart(ctx, {
+            type: 'line',
+            data: {
+                labels: Object.keys(dados).slice(-7),
+                datasets: [{ label: 'Frequência Real', data: Object.values(dados).slice(-7), borderColor: '#2e7d32', fill: true, backgroundColor: 'rgba(46, 125, 50, 0.1)' }]
+            }
+        });
+    }
+
+    function baixarRelatorio() {
+        let csv = "Nome,Data\n" + db_logs.map(l => `${l.nome},${l.data}`).join("\n");
+        const blob = new Blob([csv], { type: 'text/csv' });
+        const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'frequencia_escolar.csv'; a.click();
+    }
+</script>
+</body>
+</html>
